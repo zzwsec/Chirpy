@@ -19,10 +19,30 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf("Hits: %d", cfg.fileserverHits.Load())))
+
+	// 直接写入 w，不需要先转成字符串再转成 []byte
+	fmt.Fprintf(w, `<html>
+  <body>
+    <h1>Welcome, Chirpy Admin</h1>
+    <p>Chirpy has been visited %d times!</p>
+  </body>
+</html>`, cfg.fileserverHits.Load())
 }
+
+//// 等效
+// func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
+// 	resp := fmt.Sprintf(`<html>
+//   <body>
+//     <h1>Welcome, Chirpy Admin</h1>
+//     <p>Chirpy has been visited %d times!</p>
+//   </body>
+// </html>`, cfg.fileserverHits.Load())
+// 	w.Header().Set("Content-Type", "text/html")
+// 	w.WriteHeader(http.StatusOK)
+// 	w.Write([]byte(resp))
+// }
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	cfg.fileserverHits.Store(0)
@@ -45,10 +65,13 @@ func main() {
 
 	apiSM := http.NewServeMux()
 	apiSM.HandleFunc("GET /healthz", handlerHealth)
-	apiSM.HandleFunc("GET /metrics", cfg.handlerMetrics)
 	apiSM.HandleFunc("POST /reset", cfg.handlerReset)
 
+	adminSM := http.NewServeMux()
+	adminSM.HandleFunc("GET /metrics", cfg.handlerMetrics)
+
 	mainSM.Handle("/api/", http.StripPrefix("/api", apiSM))
+	mainSM.Handle("/admin/", http.StripPrefix("/admin", adminSM))
 
 	server := &http.Server{
 		Addr:    ":8080",
