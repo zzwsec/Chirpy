@@ -30,20 +30,29 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func handlerHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
 func main() {
 	cfg := &apiConfig{fileserverHits: atomic.Int32{}}
-	sm := http.NewServeMux()
-	sm.Handle("/app/", cfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
-	sm.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-	sm.HandleFunc("/metrics", cfg.handlerMetrics)
-	sm.HandleFunc("/reset", cfg.handlerReset)
+	mainSM := http.NewServeMux()
+	mainSM.Handle("/app/", cfg.middlewareMetricsInc(
+		http.StripPrefix("/app", http.FileServer(http.Dir(".")))),
+	)
+
+	apiSM := http.NewServeMux()
+	apiSM.HandleFunc("GET /healthz", handlerHealth)
+	apiSM.HandleFunc("GET /metrics", cfg.handlerMetrics)
+	apiSM.HandleFunc("POST /reset", cfg.handlerReset)
+
+	mainSM.Handle("/api/", http.StripPrefix("/api", apiSM))
+
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: sm,
+		Handler: mainSM,
 	}
 	log.Fatal(server.ListenAndServe())
 }
