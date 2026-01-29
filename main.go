@@ -65,10 +65,10 @@ func main() {
 
 	apiSM := http.NewServeMux()
 	apiSM.HandleFunc("GET /healthz", handlerHealth)
-	apiSM.HandleFunc("POST /reset", cfg.handlerReset)
 
 	adminSM := http.NewServeMux()
 	adminSM.HandleFunc("GET /metrics", cfg.handlerMetrics)
+	adminSM.HandleFunc("POST /reset", cfg.handlerReset)
 
 	mainSM.Handle("/api/", http.StripPrefix("/api", apiSM))
 	mainSM.Handle("/admin/", http.StripPrefix("/admin", adminSM))
