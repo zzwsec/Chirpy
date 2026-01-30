@@ -36,6 +36,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error opening database: %s", err)
 	}
+
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Database connection failed: %s", err)
+	}
+
 	defer db.Close()
 
 	db.SetMaxOpenConns(10)
