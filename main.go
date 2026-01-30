@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
+
+var badWords = []string{"kerfuffle", "sharbert", "fornax"}
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
@@ -63,14 +66,14 @@ func (cfg *apiConfig) handlerValidateChirp(w http.ResponseWriter, r *http.Reques
 		Body string `json:"body"`
 	}
 	type returnVals struct {
-		Valid bool `json:"valid"`
+		CleanedBody string `json:"cleaned_body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
 		return
 	}
 
@@ -81,7 +84,7 @@ func (cfg *apiConfig) handlerValidateChirp(w http.ResponseWriter, r *http.Reques
 	}
 
 	respondWithJSON(w, http.StatusOK, returnVals{
-		Valid: true,
+		CleanedBody: checkWords(params.Body),
 	})
 }
 
@@ -132,4 +135,23 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	}
 	w.WriteHeader(code)
 	w.Write(dat)
+}
+
+func checkWords(words string) string {
+	// 1. 空格分割
+	splitWords := strings.Split(words, " ")
+
+	for i, word := range splitWords {
+		// 2. 转换小写进行匹配
+		lowered := strings.ToLower(word)
+		for _, bad := range badWords {
+			if lowered == bad {
+				splitWords[i] = "****"
+				break
+			}
+		}
+	}
+
+	// 3. 空格连接
+	return strings.Join(splitWords, " ")
 }
