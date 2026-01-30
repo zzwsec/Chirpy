@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -21,8 +22,6 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
-
-	// 直接写入 w，不需要先转成字符串再转成 []byte
 	fmt.Fprintf(w, `<html>
   <body>
     <h1>Welcome, Chirpy Admin</h1>
@@ -31,23 +30,55 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 </html>`, cfg.fileserverHits.Load())
 }
 
-//// 等效
-// func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
-// 	resp := fmt.Sprintf(`<html>
-//   <body>
-//     <h1>Welcome, Chirpy Admin</h1>
-//     <p>Chirpy has been visited %d times!</p>
-//   </body>
-// </html>`, cfg.fileserverHits.Load())
-// 	w.Header().Set("Content-Type", "text/html")
-// 	w.WriteHeader(http.StatusOK)
-// 	w.Write([]byte(resp))
-// }
-
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	cfg.fileserverHits.Store(0)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
+}
+
+func (cfg *apiConfig) handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+	type reqBody struct {
+		Body string `json:"body"`
+	}
+
+	type respErrBody struct {
+		Error string `json:"error"`
+	}
+
+	type respBody struct {
+		Valid bool `json:"valid"`
+	}
+
+	var req reqBody
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		tmpResp, _ := json.Marshal(respErrBody{
+			Error: "Something went wrong",
+		})
+		w.Write(tmpResp)
+		return
+	}
+
+	if len(req.Body) > 140 || len(req.Body) == 0 {
+		log.Print("Chirp is not a valid data")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		tmpResp, _ := json.Marshal(respErrBody{
+			Error: "Chirp is not a valid data",
+		})
+		w.Write(tmpResp)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	tmpResp, _ := json.Marshal(respBody{
+		Valid: true,
+	})
+	w.Write(tmpResp)
 }
 
 func handlerHealth(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +96,7 @@ func main() {
 
 	apiSM := http.NewServeMux()
 	apiSM.HandleFunc("GET /healthz", handlerHealth)
+	apiSM.HandleFunc("POST /validate_chirp", cfg.handlerValidateChirp)
 
 	adminSM := http.NewServeMux()
 	adminSM.HandleFunc("GET /metrics", cfg.handlerMetrics)
