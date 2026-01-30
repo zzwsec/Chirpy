@@ -23,6 +23,7 @@ var badWords = []string{"kerfuffle", "sharbert", "fornax"}
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	DB             *database.Queries
+	platform       string
 }
 
 type User struct {
@@ -38,6 +39,7 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 	dbURL := os.Getenv("DB_URL")
+	platform := os.Getenv("PLATFORM")
 	if dbURL == "" {
 		log.Fatal("DB_URL is not set")
 	}
@@ -61,6 +63,7 @@ func main() {
 	cfg := &apiConfig{
 		fileserverHits: atomic.Int32{},
 		DB:             dbQueries,
+		platform:       platform,
 	}
 
 	mainSM := http.NewServeMux()
@@ -144,6 +147,14 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
+	if cfg.platform != "dev" {
+		respondWithError(w, http.StatusForbidden, "Only allowed in dev environment")
+		return
+	}
+	if err := cfg.DB.DeleteUsers(r.Context()); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
 	cfg.fileserverHits.Store(0)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
