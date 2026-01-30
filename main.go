@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/mail"
 	"os"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/zzwsec/Chirpy/internal/database"
@@ -21,6 +23,13 @@ var badWords = []string{"kerfuffle", "sharbert", "fornax"}
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	DB             *database.Queries
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 func main() {
@@ -65,6 +74,7 @@ func main() {
 	apiSM := http.NewServeMux()
 	apiSM.HandleFunc("GET /healthz", handlerHealth)
 	apiSM.HandleFunc("POST /validate_chirp", cfg.handlerValidateChirp)
+	apiSM.HandleFunc("POST /users", cfg.handlerUsers)
 
 	// Admin 路由
 	adminSM := http.NewServeMux()
@@ -137,6 +147,38 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	cfg.fileserverHits.Store(0)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
+}
+
+func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, r *http.Request) {
+	type email struct {
+		Email string `json:"email"`
+	}
+	e := &email{}
+	err := json.NewDecoder(r.Body).Decode(e)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+
+	// 验证邮箱格式
+	_, err = mail.ParseAddress(e.Email)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid email format")
+		return
+	}
+
+	dbUser, err := cfg.DB.CreateUser(r.Context(), e.Email)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
+	})
 }
 
 func handlerHealth(w http.ResponseWriter, r *http.Request) {
