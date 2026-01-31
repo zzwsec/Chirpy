@@ -87,6 +87,7 @@ func main() {
 	// apiSM.HandleFunc("POST /validate_chirp", cfg.handlerValidateChirp)
 	apiSM.HandleFunc("POST /users", cfg.handlerUsers)
 	apiSM.HandleFunc("POST /chirps", cfg.handlerChirps)
+	apiSM.HandleFunc("GET /chirps", cfg.handlerGetChirps)
 
 	// Admin 路由
 	adminSM := http.NewServeMux()
@@ -221,6 +222,26 @@ func (cfg *apiConfig) handlerChirps(w http.ResponseWriter, r *http.Request) {
 		Body:      c.Body,
 		UserID:    c.UserID,
 	})
+}
+
+func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
+	chirps, err := cfg.DB.GetChirpsAscByCreateAt(r.Context())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	cs := make([]Chirp, 0, len(chirps))
+	for _, chirp := range chirps {
+		cs = append(cs, Chirp{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		})
+	}
+	respondWithJSON(w, http.StatusOK, cs)
 }
 
 func handlerHealth(w http.ResponseWriter, r *http.Request) {

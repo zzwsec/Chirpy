@@ -9,5 +9,8 @@ VALUES (
 )
 RETURNING *;
 
--- name: GetChirpByID :one
-SELECT * FROM chirps WHERE id = $1;
+-- name: GetChirpsAscByCreateAt :many
+SELECT * FROM chirps ORDER BY created_at ASC;
+
+-- name: GetChirpsDescByCreateAt :many
+SELECT * FROM chirps ORDER BY created_at DESC;
