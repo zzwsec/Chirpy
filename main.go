@@ -33,6 +33,14 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -76,8 +84,9 @@ func main() {
 	// API 路由
 	apiSM := http.NewServeMux()
 	apiSM.HandleFunc("GET /healthz", handlerHealth)
-	apiSM.HandleFunc("POST /validate_chirp", cfg.handlerValidateChirp)
+	// apiSM.HandleFunc("POST /validate_chirp", cfg.handlerValidateChirp)
 	apiSM.HandleFunc("POST /users", cfg.handlerUsers)
+	apiSM.HandleFunc("POST /chirps", cfg.handlerChirps)
 
 	// Admin 路由
 	adminSM := http.NewServeMux()
@@ -103,35 +112,6 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.fileserverHits.Add(1)
 		next.ServeHTTP(w, r)
-	})
-}
-
-// --- 处理函数 (Handlers) ---
-
-func (cfg *apiConfig) handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		Body string `json:"body"`
-	}
-	type returnVals struct {
-		CleanedBody string `json:"cleaned_body"`
-	}
-
-	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Something went wrong")
-		return
-	}
-
-	const maxChirpLength = 140
-	if len(params.Body) > maxChirpLength || len(params.Body) == 0 {
-		respondWithError(w, http.StatusBadRequest, "Chirp not valid")
-		return
-	}
-
-	respondWithJSON(w, http.StatusOK, returnVals{
-		CleanedBody: checkWords(params.Body),
 	})
 }
 
@@ -189,6 +169,57 @@ func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: dbUser.CreatedAt,
 		UpdatedAt: dbUser.UpdatedAt,
 		Email:     dbUser.Email,
+	})
+}
+
+func (cfg *apiConfig) handlerChirps(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
+	}
+
+	type returnVals struct {
+		CleanedBody string `json:"cleaned_body"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+
+	const maxChirpLength = 140
+	if len(params.Body) > maxChirpLength || len(params.Body) == 0 {
+		respondWithError(w, http.StatusBadRequest, "Chirp not valid")
+		return
+	}
+
+	params.Body = checkWords(params.Body)
+
+	// 外键约束，可以不用查询，直接插入
+	// _, err = cfg.DB.QueryUserByUserID(r.Context(), params.UserID)
+	// if err != nil {
+	// 	respondWithError(w, http.StatusBadRequest, "User not find")
+	// 	return
+	// }
+
+	c, err := cfg.DB.CreateChirps(r.Context(), database.CreateChirpsParams{
+		Body:   params.Body,
+		UserID: params.UserID,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, Chirp{
+		ID:        c.ID,
+		CreatedAt: c.CreatedAt,
+		UpdatedAt: c.UpdatedAt,
+		Body:      c.Body,
+		UserID:    c.UserID,
 	})
 }
 
