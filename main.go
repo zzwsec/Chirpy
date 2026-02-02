@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/zzwsec/Chirpy/internal/auth"
 	"github.com/zzwsec/Chirpy/internal/database"
 )
 
@@ -84,11 +85,11 @@ func main() {
 	// API 路由
 	apiSM := http.NewServeMux()
 	apiSM.HandleFunc("GET /healthz", handlerHealth)
-	// apiSM.HandleFunc("POST /validate_chirp", cfg.handlerValidateChirp)
 	apiSM.HandleFunc("POST /users", cfg.handlerUsers)
 	apiSM.HandleFunc("POST /chirps", cfg.handlerChirps)
 	apiSM.HandleFunc("GET /chirps", cfg.handlerGetChirps)
 	apiSM.HandleFunc("GET /chirps/{chirpID}", cfg.handlerGetChirpByID)
+	apiSM.HandleFunc("POST /login", cfg.handlerLogin)
 
 	// Admin 路由
 	adminSM := http.NewServeMux()
@@ -143,24 +144,35 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, r *http.Request) {
-	type email struct {
-		Email string `json:"email"`
+	type create struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
-	e := &email{}
-	err := json.NewDecoder(r.Body).Decode(e)
+	c := &create{}
+	err := json.NewDecoder(r.Body).Decode(c)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Something went wrong")
 		return
 	}
 
 	// 验证邮箱格式
-	_, err = mail.ParseAddress(e.Email)
+	_, err = mail.ParseAddress(c.Email)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid email format")
 		return
 	}
 
-	dbUser, err := cfg.DB.CreateUser(r.Context(), e.Email)
+	// 密码加盐
+	hashPassword, err := auth.HashPassword(c.Password)
+	if err != nil {
+		respondWithError(w, http.StatusBadGateway, "Backend exception")
+		return
+	}
+
+	dbUser, err := cfg.DB.CreateUser(r.Context(), database.CreateUserParams{
+		HashedPassword: hashPassword,
+		Email:          c.Email,
+	})
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
 		return
@@ -171,6 +183,42 @@ func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: dbUser.CreatedAt,
 		UpdatedAt: dbUser.UpdatedAt,
 		Email:     dbUser.Email,
+	})
+}
+
+func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+
+	params := parameters{}
+	err := json.NewDecoder(r.Body).Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+	u, err := cfg.DB.QueryUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	ok, err := auth.CheckPasswordHash(params.Password, u.HashedPassword)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	if !ok {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, User{
+		ID:        u.ID,
+		CreatedAt: u.CreatedAt,
+		UpdatedAt: u.UpdatedAt,
+		Email:     u.Email,
 	})
 }
 
