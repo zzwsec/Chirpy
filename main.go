@@ -88,6 +88,7 @@ func main() {
 	apiSM.HandleFunc("POST /users", cfg.handlerUsers)
 	apiSM.HandleFunc("POST /chirps", cfg.handlerChirps)
 	apiSM.HandleFunc("GET /chirps", cfg.handlerGetChirps)
+	apiSM.HandleFunc("GET /chirps/{chirpID}", cfg.handlerGetChirpByID)
 
 	// Admin 路由
 	adminSM := http.NewServeMux()
@@ -199,13 +200,6 @@ func (cfg *apiConfig) handlerChirps(w http.ResponseWriter, r *http.Request) {
 
 	params.Body = checkWords(params.Body)
 
-	// 外键约束，可以不用查询，直接插入
-	// _, err = cfg.DB.QueryUserByUserID(r.Context(), params.UserID)
-	// if err != nil {
-	// 	respondWithError(w, http.StatusBadRequest, "User not find")
-	// 	return
-	// }
-
 	c, err := cfg.DB.CreateChirps(r.Context(), database.CreateChirpsParams{
 		Body:   params.Body,
 		UserID: params.UserID,
@@ -242,6 +236,28 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	respondWithJSON(w, http.StatusOK, cs)
+}
+
+func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request) {
+	chirpID, err := uuid.Parse(r.PathValue("chirpID"))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+
+	chirp, err := cfg.DB.GetChirpByID(r.Context(), chirpID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Something went wrong")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, Chirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	})
 }
 
 func handlerHealth(w http.ResponseWriter, r *http.Request) {
