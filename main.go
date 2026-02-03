@@ -96,6 +96,7 @@ func main() {
 	apiSM := http.NewServeMux()
 	apiSM.HandleFunc("GET /healthz", handlerHealth)
 	apiSM.HandleFunc("POST /users", cfg.handlerUsers)
+	apiSM.HandleFunc("PUT /users", cfg.handlerUsersInfo)
 	apiSM.HandleFunc("POST /chirps", cfg.handlerChirps)
 	apiSM.HandleFunc("GET /chirps", cfg.handlerGetChirps)
 	apiSM.HandleFunc("GET /chirps/{chirpID}", cfg.handlerGetChirpByID)
@@ -262,6 +263,67 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (cfg *apiConfig) handlerUsersInfo(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+
+	params := parameters{}
+	err := json.NewDecoder(r.Body).Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Couldn't decode parameters")
+		return
+	}
+
+	_, err = mail.ParseAddress(params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid email format")
+		return
+	}
+
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Invalid header")
+		return
+	}
+
+	uid, err := auth.ValidateJWT(token, cfg.secret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Invalid header")
+		return
+	}
+
+	u, err := cfg.DB.QueryUserByUserID(r.Context(), uid)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid user")
+		return
+	}
+
+	pass, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Something wrong")
+		return
+	}
+
+	res, err := cfg.DB.SetUserInfo(r.Context(), database.SetUserInfoParams{
+		HashedPassword: pass,
+		Email:          params.Email,
+		ID:             u.ID,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Something wrong")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, User{
+		ID:        res.ID,
+		CreatedAt: res.CreatedAt,
+		UpdatedAt: res.UpdatedAt,
+		Email:     res.Email,
+	})
+}
+
 func (cfg *apiConfig) handlerChirps(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
@@ -347,6 +409,16 @@ func (cfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if res.RevokedAt.Valid {
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return
+	}
+
+	if res.ExpiresAt.Before(time.Now()) {
+		respondWithError(w, http.StatusUnauthorized, "Refresh token expired")
+		return
+	}
+
 	accToken, err := auth.MakeJWT(res.UserID, cfg.secret, time.Duration(time.Hour))
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, err.Error())
@@ -365,14 +437,26 @@ func (cfg *apiConfig) handlerRevoke(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_, err = cfg.DB.GetRefreshToken(r.Context(), token)
+
+	result, err := cfg.DB.RevokeToken(r.Context(), token)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	if err := cfg.DB.RevokeToken(r.Context(), token); err != nil {
-		respondWithError(w, http.StatusUnauthorized, err.Error())
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Database error")
 		return
+	}
+
+	if rows == 0 {
+		// 如果影响行数为 0，说明要么 Token 不存在，或者已经吊销过了
+		respondWithError(w, http.StatusNotFound, "Token not found or already revoked")
+		return
+	}
+
+	if rows == 0 {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
