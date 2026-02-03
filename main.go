@@ -29,11 +29,12 @@ type apiConfig struct {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token,omitempty"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token,omitempty"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
 }
 
 type Chirp struct {
@@ -99,6 +100,8 @@ func main() {
 	apiSM.HandleFunc("GET /chirps", cfg.handlerGetChirps)
 	apiSM.HandleFunc("GET /chirps/{chirpID}", cfg.handlerGetChirpByID)
 	apiSM.HandleFunc("POST /login", cfg.handlerLogin)
+	apiSM.HandleFunc("POST /refresh", cfg.handlerRefresh)
+	apiSM.HandleFunc("POST /revoke", cfg.handlerRevoke)
 
 	// Admin 路由
 	adminSM := http.NewServeMux()
@@ -197,9 +200,8 @@ func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Password         string `json:"password"`
-		Email            string `json:"email"`
-		ExpiresInSeconds int    `json:"expires_in_seconds"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 
 	params := parameters{}
@@ -225,26 +227,38 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defaultExp := time.Hour
-	var expiresIn time.Duration
-	if params.ExpiresInSeconds <= 0 || params.ExpiresInSeconds >= 3600 {
-		expiresIn = defaultExp
-	} else {
-		expiresIn = time.Duration(params.ExpiresInSeconds) * time.Second
-	}
-
+	expiresIn := time.Duration(time.Second * 3600)
 	token, err := auth.MakeJWT(u.ID, cfg.secret, expiresIn)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
 		return
 	}
 
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		log.Printf("MakeRefreshToken error: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create refresh token")
+		return
+	}
+
+	_, err = cfg.DB.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		Token:     refreshToken,
+		UserID:    u.ID,
+		ExpiresAt: time.Now().Add(time.Duration(time.Hour * 24 * 60)),
+	})
+	if err != nil {
+		log.Printf("CreateRefreshToken failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't save refresh token")
+		return
+	}
+
 	respondWithJSON(w, http.StatusOK, User{
-		ID:        u.ID,
-		CreatedAt: u.CreatedAt,
-		UpdatedAt: u.UpdatedAt,
-		Email:     u.Email,
-		Token:     token,
+		ID:           u.ID,
+		CreatedAt:    u.CreatedAt,
+		UpdatedAt:    u.UpdatedAt,
+		Email:        u.Email,
+		Token:        token,
+		RefreshToken: refreshToken,
 	})
 }
 
@@ -319,6 +333,48 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	respondWithJSON(w, http.StatusOK, cs)
+}
+
+func (cfg *apiConfig) handlerRefresh(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	res, err := cfg.DB.GetRefreshToken(r.Context(), token)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	accToken, err := auth.MakeJWT(res.UserID, cfg.secret, time.Duration(time.Hour))
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	respondWithJSON(w, http.StatusOK, struct {
+		Token string
+	}{
+		Token: accToken,
+	})
+}
+
+func (cfg *apiConfig) handlerRevoke(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	_, err = cfg.DB.GetRefreshToken(r.Context(), token)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if err := cfg.DB.RevokeToken(r.Context(), token); err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request) {
