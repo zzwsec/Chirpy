@@ -97,12 +97,13 @@ func main() {
 	apiSM.HandleFunc("GET /healthz", handlerHealth)
 	apiSM.HandleFunc("POST /users", cfg.handlerUsers)
 	apiSM.HandleFunc("PUT /users", cfg.handlerUsersInfo)
-	apiSM.HandleFunc("POST /chirps", cfg.handlerChirps)
-	apiSM.HandleFunc("GET /chirps", cfg.handlerGetChirps)
-	apiSM.HandleFunc("GET /chirps/{chirpID}", cfg.handlerGetChirpByID)
 	apiSM.HandleFunc("POST /login", cfg.handlerLogin)
 	apiSM.HandleFunc("POST /refresh", cfg.handlerRefresh)
 	apiSM.HandleFunc("POST /revoke", cfg.handlerRevoke)
+	apiSM.HandleFunc("POST /chirps", cfg.handlerChirps)
+	apiSM.HandleFunc("GET /chirps", cfg.handlerGetChirps)
+	apiSM.HandleFunc("GET /chirps/{chirpID}", cfg.handlerGetChirpByID)
+	apiSM.HandleFunc("DELETE /chirps/{chirpID}", cfg.handlerDeleteChirp)
 
 	// Admin 路由
 	adminSM := http.NewServeMux()
@@ -456,8 +457,6 @@ func (cfg *apiConfig) handlerRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rows == 0 {
-	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -481,6 +480,51 @@ func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request
 		Body:      chirp.Body,
 		UserID:    chirp.UserID,
 	})
+}
+
+func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	chirpID := r.PathValue("chirpID")
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	uid, err := auth.ValidateJWT(token, cfg.secret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT")
+		return
+	}
+
+	cid, err := uuid.Parse(chirpID)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid chirpID")
+		return
+	}
+	c, err := cfg.DB.GetChirpByID(r.Context(), cid)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			respondWithError(w, http.StatusNotFound, "Chirp not found")
+			return
+		}
+		respondWithError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+
+	if c.UserID != uid {
+		respondWithError(w, http.StatusForbidden, "Invalid option")
+		return
+	}
+
+	if err = cfg.DB.DeleteChirpByID(r.Context(), database.DeleteChirpByIDParams{
+		ID:     cid,
+		UserID: uid,
+	}); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Service exception")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handlerHealth(w http.ResponseWriter, r *http.Request) {
