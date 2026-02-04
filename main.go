@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -393,9 +394,20 @@ func (cfg *apiConfig) handlerChirps(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	authorID := r.URL.Query().Get("author_id")
+	seq := r.URL.Query().Get("sort")
 	var chirps []database.Chirp
 	var err error
 	var uid uuid.UUID
+	switch seq {
+	case "", "asc":
+		seq = "asc"
+	case "desc":
+		seq = "desc"
+	default:
+		respondWithError(w, http.StatusBadRequest, "Invalid params")
+		return
+	}
+
 	if authorID == "" {
 		chirps, err = cfg.DB.GetChirpsAscByCreateAt(r.Context())
 		if err != nil {
@@ -424,6 +436,15 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt: chirp.UpdatedAt,
 			Body:      chirp.Body,
 			UserID:    chirp.UserID,
+		})
+	}
+
+	if seq == "desc" {
+		// i, j 为切片中任意两元素下标
+		// 如果返回为true,则下标i的元素应该排在下标y的元素前面
+		// 如果返回为false,则下标i的元素应该排在下标y的元素后面
+		sort.Slice(cs, func(i, j int) bool {
+			return cs[i].CreatedAt.After(cs[j].CreatedAt)
 		})
 	}
 	respondWithJSON(w, http.StatusOK, cs)
