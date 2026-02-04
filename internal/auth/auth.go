@@ -87,7 +87,7 @@ func GetBearerToken(headers http.Header) (string, error) {
 	}
 
 	fields := strings.Fields(authHeader)
-	if len(fields) < 2 || fields[0] != "Bearer" {
+	if len(fields) != 2 || fields[0] != "Bearer" {
 		return "", errors.New("malformed authorization header")
 	}
 
@@ -101,4 +101,18 @@ func MakeRefreshToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func GetAPIKey(headers http.Header) (string, error) {
+	authHeader := headers.Get("Authorization")
+	if authHeader == "" {
+		return "", errors.New("missing authorization header")
+	}
+
+	fields := strings.Fields(authHeader)
+	if len(fields) != 2 || fields[0] != "ApiKey" {
+		return "", errors.New("malformed authorization header")
+	}
+
+	return fields[1], nil
 }

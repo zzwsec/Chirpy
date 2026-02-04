@@ -27,6 +27,7 @@ type apiConfig struct {
 	DB             *database.Queries
 	platform       string
 	secret         string
+	apiKey         string
 }
 
 type User struct {
@@ -55,9 +56,14 @@ func main() {
 	dbURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
 	secret := os.Getenv("SECRET")
+	apiKey := os.Getenv("POLKA_KEY")
 
 	if secret == "" {
 		log.Fatal("Secret is not set")
+	}
+
+	if apiKey == "" {
+		log.Fatal("apiKey is not set")
 	}
 
 	if dbURL == "" {
@@ -85,6 +91,7 @@ func main() {
 		DB:             dbQueries,
 		platform:       platform,
 		secret:         secret,
+		apiKey:         apiKey,
 	}
 
 	mainSM := http.NewServeMux()
@@ -541,8 +548,14 @@ func (cfg *apiConfig) handlerSetPremium(w http.ResponseWriter, r *http.Request) 
 		} `json:"data"`
 	}
 
+	apiHeader, err := auth.GetAPIKey(r.Header)
+	if err != nil || apiHeader != cfg.apiKey {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	var params parameters
-	err := json.NewDecoder(r.Body).Decode(&params)
+	err = json.NewDecoder(r.Body).Decode(&params)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
