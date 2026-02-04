@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -35,6 +36,7 @@ type User struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token,omitempty"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 type Chirp struct {
@@ -104,6 +106,7 @@ func main() {
 	apiSM.HandleFunc("GET /chirps", cfg.handlerGetChirps)
 	apiSM.HandleFunc("GET /chirps/{chirpID}", cfg.handlerGetChirpByID)
 	apiSM.HandleFunc("DELETE /chirps/{chirpID}", cfg.handlerDeleteChirp)
+	apiSM.HandleFunc("POST /polka/webhooks", cfg.handlerSetPremium)
 
 	// Admin 路由
 	adminSM := http.NewServeMux()
@@ -158,26 +161,26 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, r *http.Request) {
-	type create struct {
+	type parameters struct {
 		Password string `json:"password"`
 		Email    string `json:"email"`
 	}
-	c := &create{}
-	err := json.NewDecoder(r.Body).Decode(c)
+	params := &parameters{}
+	err := json.NewDecoder(r.Body).Decode(params)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Something went wrong")
 		return
 	}
 
 	// 验证邮箱格/users式
-	_, err = mail.ParseAddress(c.Email)
+	_, err = mail.ParseAddress(params.Email)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid email format")
 		return
 	}
 
 	// 密码加盐
-	hashPassword, err := auth.HashPassword(c.Password)
+	hashPassword, err := auth.HashPassword(params.Password)
 	if err != nil {
 		respondWithError(w, http.StatusBadGateway, "Backend exception")
 		return
@@ -185,7 +188,7 @@ func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, r *http.Request) {
 
 	dbUser, err := cfg.DB.CreateUser(r.Context(), database.CreateUserParams{
 		HashedPassword: hashPassword,
-		Email:          c.Email,
+		Email:          params.Email,
 	})
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
@@ -193,10 +196,11 @@ func (cfg *apiConfig) handlerUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondWithJSON(w, http.StatusCreated, User{
-		ID:        dbUser.ID,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
-		Email:     dbUser.Email,
+		ID:          dbUser.ID,
+		CreatedAt:   dbUser.CreatedAt,
+		UpdatedAt:   dbUser.UpdatedAt,
+		Email:       dbUser.Email,
+		IsChirpyRed: dbUser.IsChirpyRed,
 	})
 }
 
@@ -261,6 +265,7 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		Email:        u.Email,
 		Token:        token,
 		RefreshToken: refreshToken,
+		IsChirpyRed:  u.IsChirpyRed,
 	})
 }
 
@@ -318,10 +323,11 @@ func (cfg *apiConfig) handlerUsersInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondWithJSON(w, http.StatusOK, User{
-		ID:        res.ID,
-		CreatedAt: res.CreatedAt,
-		UpdatedAt: res.UpdatedAt,
-		Email:     res.Email,
+		ID:          res.ID,
+		CreatedAt:   res.CreatedAt,
+		UpdatedAt:   res.UpdatedAt,
+		Email:       res.Email,
+		IsChirpyRed: res.IsChirpyRed,
 	})
 }
 
@@ -524,6 +530,38 @@ func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (cfg *apiConfig) handlerSetPremium(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID uuid.UUID `json:"user_id"`
+		} `json:"data"`
+	}
+
+	var params parameters
+	err := json.NewDecoder(r.Body).Decode(&params)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if params.Event != "user.upgraded" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	_, err = cfg.DB.SetPremiumUser(r.Context(), params.Data.UserID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
